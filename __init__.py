@@ -415,7 +415,7 @@ def _detect(env):
                     QtdirNotFound,
                     "QT5DIR variable not defined, and detected moc is for Qt %s" % vernumber)
 
-        QT5DIR = os.path.dirname(os.path.dirname(moc))
+        QT5DIR = os.path.dirname(os.path.dirname(moc)) # (assume dir layout of the form: QT5DIR/bin/moc)
         SCons.Warnings.warn(
             QtdirNotFound,
             "QT5DIR variable is not defined, using moc executable as a hint (QT5DIR=%s)" % QT5DIR)
@@ -426,6 +426,23 @@ def _detect(env):
         "Could not detect Qt 5 installation")
     return None
 
+def _locateQt5Binpath(qtdir):
+    path = os.path.join(qtdir,'qtbase','bin')
+    if os.path.isdir(path):
+        return path
+    return os.path.join(qtdir,'bin')
+
+def _locateQt5IncludePath(qtdir):
+    path = os.path.join(qtdir,'qtbase','include')
+    if os.path.isdir(path):
+        return path
+    return os.path.join(qtdir,'include')
+
+def _locateQt5LibPath(qtdir):
+    path = os.path.join(qtdir,'qtbase','lib')
+    if os.path.isdir(path):
+        return path
+    return os.path.join(qtdir,'lib')
 
 def __scanResources(node, env, path, arg):
     # Helper function for scanning .qrc resource files
@@ -710,10 +727,10 @@ def generate(env):
     ]
     command_suffixes = ['-qt5', '5', '']
         
-    def locateQt5Command(env, command, qtdir) :
+    def locateQt5Command(env, command, qtbinpath) :
         triedPaths = []
         for suffix in suffixes :
-            fullpath = os.path.join(qtdir,'bin',command + suffix)
+            fullpath = os.path.join(qtbinpath,command + suffix)
             if os.access(fullpath, os.X_OK) :
                 return fullpath
             triedPaths.append(fullpath)
@@ -728,17 +745,18 @@ def generate(env):
     Builder = SCons.Builder.Builder
 
     env['QT5DIR']  = _detect(env)
+    qt5Binpath = _locateQt5Binpath(env['QT5DIR'])
     # TODO: 'Replace' should be 'SetDefault'
 #    env.SetDefault(
     env.Replace(
         QT5DIR  = _detect(env),
-        QT5_BINPATH = os.path.join('$QT5DIR', 'bin'),
+        QT5_BINPATH = qt5Binpath,
         # TODO: This is not reliable to QT5DIR value changes but needed in order to support '-qt5' variants
-        QT5_MOC = locateQt5Command(env,'moc', env['QT5DIR']),
-        QT5_UIC = locateQt5Command(env,'uic', env['QT5DIR']),
-        QT5_RCC = locateQt5Command(env,'rcc', env['QT5DIR']),
-        QT5_LUPDATE = locateQt5Command(env,'lupdate', env['QT5DIR']),
-        QT5_LRELEASE = locateQt5Command(env,'lrelease', env['QT5DIR']),
+        QT5_MOC = locateQt5Command(env,'moc', qt5Binpath),
+        QT5_UIC = locateQt5Command(env,'uic', qt5Binpath),
+        QT5_RCC = locateQt5Command(env,'rcc', qt5Binpath),
+       	#QT5_LUPDATE = locateQt5Command(env,'lupdate', qt5Binpath),
+        #QT5_LRELEASE = locateQt5Command(env,'lrelease', qt5Binpath),
 
         QT5_AUTOSCAN = 1, # Should the qt5 tool try to figure out, which sources are to be moc'ed?
         QT5_AUTOSCAN_STRATEGY = 0, # While scanning for files to moc, should we search for includes in qtsolutions style?
@@ -951,15 +969,17 @@ def enable_modules(self, modules, debug=False, crosscompiling=False) :
         self["QT5_MOCCPPPATH"] = self["CPPPATH"]
         return
     if sys.platform == "win32" or crosscompiling :
+        qt5IncludePath = _locateQt5IncludePath(self['QT5DIR'])
+        qt5LibPath = _locateQt5LibPath(self['QT5DIR'])
         if crosscompiling:
             transformedQtdir = transformToWinePath(self['QT5DIR'])
             self['QT5_MOC'] = "QT5DIR=%s %s"%( transformedQtdir, self['QT5_MOC'])
-        self.AppendUnique(CPPPATH=[os.path.join("$QT5DIR","include")])
+        self.AppendUnique(CPPPATH=[qt5IncludePath])
         try: modules.remove("QtDBus")
         except: pass
         if debug : debugSuffix = 'd'
         if "QtAssistant" in modules:
-            self.AppendUnique(CPPPATH=[os.path.join("$QT5DIR","include","QtAssistant")])
+            self.AppendUnique(CPPPATH=[os.path.join(qt5IncludePath,"QtAssistant")])
             modules.remove("QtAssistant")
             modules.append("QtAssistantClient")
         self.AppendUnique(LIBS=['qtmain'+debugSuffix])
@@ -967,15 +987,17 @@ def enable_modules(self, modules, debug=False, crosscompiling=False) :
         self.PrependUnique(LIBS=[lib+debugSuffix for lib in modules if lib in staticModules])
         if 'QtOpenGL' in modules:
             self.AppendUnique(LIBS=['opengl32'])
-        self.AppendUnique(CPPPATH=[ '$QT5DIR/include/'])
-        self.AppendUnique(CPPPATH=[ '$QT5DIR/include/'+module for module in modules])
+        moduleIncludePaths = []
+        for module in modules:
+            moduleIncludePaths.append(os.path.join(qt5IncludePath,module))
+        self.AppendUnique(CPPPATH=moduleIncludePaths)
         if crosscompiling :
             self["QT5_MOCCPPPATH"] = [
                 path.replace('$QT5DIR', transformedQtdir)
                     for path in self['CPPPATH'] ]
         else :
             self["QT5_MOCCPPPATH"] = self["CPPPATH"]
-        self.AppendUnique(LIBPATH=[os.path.join('$QT5DIR','lib')])
+        self.AppendUnique(LIBPATH=[qt5LibPath])
         return
         
     """
